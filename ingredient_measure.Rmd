@@ -1,0 +1,134 @@
+---
+title: "Appendix"
+output: pdf_document
+---
+
+```{r warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+library(Rtsne)
+library(e1071)
+library(glmnet)
+load("data_nir_tablets.RData")
+```
+. 
+
+Then we are checking for range of x before and after scaling to see how scaling impacts the data. 
+
+
+```{r}
+range(x)
+dim(x)
+x <- scale(x) #standardizing data
+range(x)
+rtsne <-Rtsne(x,perplexity =5)
+cols <- c("black","darkorange2")[y+1]
+plot(rtsne$Y, pch= 19, col = adjustcolor(cols,0.3))
+```
+I am initially scaling x (basically normalizing it for the given range). 
+
+
+Data will be divided into 2 parts. The first part is the training part and the second part is the validation
+set. I have divided them into the ratio of 80-20. We already have a test set which was provided. 
+The primary purpose of a validation set is to tune in the value of the hyperparameter. 
+```{r  warnings = FALSE}
+TOT <- nrow(x)
+N <- floor(TOT*0.8)
+L <- floor(TOT*0.2)
+B <- 100
+table(y)
+```
+The below function is the misclass function which helps in matching the predicted output with the correct 
+output. It helps in calculation of misclassification rate. 
+```{r}
+
+misclass_error <-function(y, yhat) 
+  {
+  tab <-table(y, yhat)
+  1-classAgreement(tab)$diag
+}
+```
+
+
+```{r}
+tau <- 0.5
+# tau is the threshold value for deciding between the outputs 0 and 1. 
+# If the value is greater than tau, then 
+# the output becomes 1, otherwise it stays 0. 
+S <- 100 #length of the sequence of lambda that I will try. 
+lambda <- seq(0.005,0.15,length = S)
+# Getting a vector with all the lambda values that I have to try. 
+# Creating the error train matrix of size B*S (number of trials times
+# number of lambda value for each trial)
+err_train <- err_val <- matrix(NA, B, S)
+err_test <- lambda_best <- rep(NA, B)
+
+
+#processing the data for each and every replication
+for(b in 1:B){
+  # sample train and validation data
+train <- sample((1:TOT),N)
+val <- setdiff(1:TOT,c(train))
+  
+  #train the model and save the model to fit variable
+  fit <- glmnet(x[train,],y[train],family="binomial", alpha = 1,lambda = lambda)
+  #using fit to train the model
+  p_train <- predict(fit, newx = x[train,],type = "response")
+  y_train <- apply(p_train, 2, function(v) ifelse(v > tau, 1, 0))
+  #using the model for validation set
+  p_val <-predict(fit,newx =x[val,],type ="response")
+  y_val <-apply(p_val,2,function(v)ifelse(v>tau,1,0))
+  #calculating training and validation error
+  err_train[b,] <-sapply(1:S,function(s)misclass_error(y[train], y_train[,s])) 
+  err_val[b,] <-sapply(1:S,function(s)misclass_error(y[val], y_val[,s]) )
+  #putting the best result to lambda_best
+  best <- which.min(err_val[b,])
+  lambda_best[b] <- lambda[best]
+}
+
+```
+
+```{r}
+# take 1-lambda as lambda is inversely related to complexity
+matplot(x =1-lambda,t(err_train),type ="l",lty =1,ylab ="Error",
+        xlab ="1 -lambda",col =adjustcolor("black",0.1),log ="y")
+
+# error on log scale
+matplot(x =1-lambda,t(err_val),type ="l",lty =1,
+        col =adjustcolor("deepskyblue2",0.1),add =TRUE,log ="y")
+lines(1-lambda,colMeans(err_train),col ="black",lwd =2)
+lines(1-lambda,colMeans(err_val),col ="deepskyblue3",lwd =2)
+legend("topright",legend =c("Training error","Validation error"),
+       fill =c("black","deepskyblue2"),bty ="n")
+# get optimal lambda
+lambda_star <-lambda[which.min(colMeans(err_val) ) ]
+lambda_star
+abline(v = 1 - lambda_star,col = "magenta")
+```
+
+
+```{r}
+# compute misclassification error
+
+fit <- glmnet(x[train,],y[train],family = "binomial",alpha=1,lambda = lambda_star)
+# storing the final model that will be used for further calculation and on the test set. 
+p_test <-predict(fit,newx =x[val,],type ="response")
+xtest <-apply(p_test,2,function(v)ifelse(v>tau,1,0))
+table(xtest,y[val])
+
+
+misclass_error(xtest,y[val])
+
+```
+
+```{r}
+x_test <- scale(x_test)
+p_test <- predict(fit,newx = x_test,type = "response")
+xtest <-apply(p_test,2,function(v)ifelse(v>tau,1,0))
+table(xtest,y_test)
+misclass_error(xtest,y_test)
+```
+
+
